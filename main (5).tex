@@ -1,0 +1,408 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{listings}
+\usepackage{color}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{amsmath}
+\usepackage{multirow}
+
+% Configuración para código MIPS
+\lstdefinelanguage{MIPS}{
+    keywords={add, addi, sub, lw, sw, li, move, jal, jr, j, beq, bne, syscall, sll, srl, andi, ble, bgt, bge},
+    keywordstyle=\color{blue}\bfseries,
+    ndkeywords={.data, .text, .globl, .asciiz, .word},
+    ndkeywordstyle=\color{magenta}\bfseries,
+    identifierstyle=\color{black},
+    sensitive=false,
+    comment=[l]{\#},
+    commentstyle=\color{green}\ttfamily,
+    stringstyle=\color{red}\ttfamily,
+    morestring=[b]"
+}
+
+\lstset{
+    language=MIPS,
+    basicstyle=\footnotesize\ttfamily,
+    numbers=left,
+    numberstyle=\tiny,
+    frame=single,
+    breaklines=true,
+    postbreak=\raisebox{0ex}[0ex][0ex]{\ensuremath{\color{red}\hookrightarrow\space}}
+}
+
+\title{Análisis de Implementación de Algoritmos de Ordenamiento en MIPS32}
+\author{Arquitectura de Computadores}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Este informe analiza la implementación práctica de algoritmos de ordenamiento (Bubble Sort, Merge Sort y Quicksort) en ensamblador MIPS32. Se examinan aspectos fundamentales como el uso de registros, estructuras de control, complejidad computacional, y herramientas de depuración en MARS. El objetivo es comprender las particularidades de la programación en ensamblador RISC y su impacto en el rendimiento de algoritmos clásicos.
+\end{abstract}
+
+\section{Registros Temporales vs Registros Guardados}
+
+\subsection{Diferencias Conceptuales}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|p{4cm}|p{5cm}|p{5cm}|}
+\hline
+\textbf{Característica} & \textbf{Registros Temporales (\$t0-\$t9)} & \textbf{Registros Guardados (\$s0-\$s7)} \\
+\hline
+Convención & No preservados entre llamadas & Preservados entre llamadas \\
+Persistencia & Pueden ser sobrescritos por funciones llamadas & Deben ser restaurados al retornar \\
+Uso típico & Valores temporales, cálculos intermedios & Variables que deben mantenerse \\
+Responsabilidad & Caller debe guardarlos si los necesita & Callee debe guardarlos si los usa \\
+\hline
+\end{tabular}
+\caption{Diferencias entre registros temporales y guardados}
+\end{table}
+
+\subsection{Aplicación Práctica en Bubble Sort}
+
+\begin{lstlisting}[caption=Uso de registros en Bubble Sort]
+bubble_sort:
+    # Uso de registros guardados (deben preservarse)
+    move $s0, $a0              # $s0 = direccion base (debe mantenerse)
+    move $s1, $a1              # $s1 = n (debe mantenerse)
+    
+    # Uso de registros temporales (pueden sobrescribirse)
+    li $t0, 0                   # $t0 = i (temporal)
+    lw $t1, 0($s0)             # $t1 = array[i] (temporal)
+    addi $t2, $t1, 1           # $t2 = calculo temporal
+\end{lstlisting}
+
+En la práctica:
+- \textbf{\$s0-\$s7}: Se usaron para la dirección base del array y el tamaño, valores que deben persistir
+- \textbf{\$t0-\$t9}: Se usaron para índices de bucle, comparaciones y valores temporales
+- Al llamar funciones, se guardaron \$s0-\$s7 en pila pero no \$t0-\$t9
+
+\section{Registros de Propósito Específico}
+
+\subsection{Funciones de \$a0-\$a3, \$v0-\$v1 y \$ra}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Registro} & \textbf{Propósito} & \textbf{Aplicación práctica} \\
+\hline
+\$a0-\$a3 & Argumentos para funciones & Dirección del array, low, high \\
+\$v0-\$v1 & Valores de retorno & Índice del pivote, resultados \\
+\$ra & Dirección de retorno & Guardado en pila para recursión \\
+\hline
+\end{tabular}
+\caption{Registros de propósito específico}
+\end{table}
+
+\begin{lstlisting}[caption=Ejemplo de uso en Quicksort]
+quicksort:
+    # $a0 = direccion array
+    # $a1 = low
+    # $a2 = high
+    
+    jal partition              # Llamada a funcion
+    move $s3, $v0              # Guardar resultado ($v0)
+    
+    # Llamada recursiva
+    jal quicksort              # $ra se sobrescribe automaticamente
+\end{lstlisting}
+
+\section{Registros vs Memoria: Impacto en Rendimiento}
+
+\subsection{Comparativa de Accesos}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Operación} & \textbf{Ciclos} & \textbf{Energía} & \textbf{Uso en algoritmo} \\
+\hline
+Acceso a registro & 1 ciclo & Baja & Constante \\
+Acceso a memoria (lw/sw) & 2-100+ ciclos & Alta & Para array y pila \\
+\hline
+\end{tabular}
+\caption{Comparativa de costos de acceso}
+\end{table}
+
+\subsection{Impacto en Algoritmos}
+
+Para Bubble Sort con n=1000:
+\begin{itemize}
+    \item \textbf{Usando registros}: Todas las comparaciones entre registros $\approx$ 500,000 ciclos
+    \item \textbf{Usando memoria}: Cada comparación requeriría accesos a memoria $\approx$ 50,000,000 ciclos
+    \item \textbf{Diferencia}: 100x más lento usando memoria
+\end{itemize}
+
+\section{Estructuras de Control y Eficiencia}
+
+\subsection{Impacto de Bucles Anidados}
+
+\begin{lstlisting}[caption=Bucles anidados en Bubble Sort]
+bucle_externo:
+    # 1: Control de bucle externo
+    blez $s2, fin_bubble
+    
+bucle_interno:
+    # 2: Control de bucle interno
+    bge $s3, $s2, siguiente_pasada
+    
+    # 3: Operaciones de comparacion
+    lw $t1, 0($t0)            # Acceso a memoria
+    lw $t3, 0($t2)            # Acceso a memoria
+    ble $t1, $t3, no_swap      # Salto condicional
+    
+    # 4: Intercambio (2 stores)
+    sw $t3, 0($t0)
+    sw $t1, 0($t2)
+\end{lstlisting}
+
+\subsection{Costo de Saltos}
+Cada instrucción de salto (beq, bne, j) causa:
+\begin{itemize}
+    \item Penalización por salto: 1-3 ciclos (pipelines)
+    \item Posible vaciado de pipeline si se predice incorrectamente
+    \item En algoritmos de ordenamiento: O(n²) saltos condicionales
+\end{itemize}
+
+\section{Análisis de Complejidad: Quicksort vs Bubble Sort}
+
+\subsection{Comparativa Teórica}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Algoritmo} & \textbf{Mejor caso} & \textbf{Caso promedio} & \textbf{Peor caso} \\
+\hline
+Quicksort & O(n log n) & O(n log n) & O(n²) \\
+Bubble Sort & O(n) & O(n²) & O(n²) \\
+Merge Sort & O(n log n) & O(n log n) & O(n log n) \\
+\hline
+\end{tabular}
+\caption{Comparativa de complejidades}
+\end{table}
+
+\subsection{Implicaciones en MIPS32}
+
+Para n = 1000:
+\begin{itemize}
+    \item \textbf{Bubble Sort optimizado}: $\approx$ 500,000 comparaciones
+    \item \textbf{Quicksort}: $\approx$ 10,000 comparaciones
+    \item \textbf{Diferencia}: 50x más rápido Quicksort
+\end{itemize}
+
+\subsection{Impacto de la Recursión}
+Quicksort requiere:
+\begin{itemize}
+    \item Aproximadamente log₂(n) niveles de recursión
+    \item 8-16 bytes por nivel en pila
+    \item Para n=1000: $\approx$ 10 niveles, 160 bytes de pila
+\end{itemize}
+
+\section{Ciclo de Ejecución en MIPS32}
+
+\subsection{Las 5 Fases del Pipeline}
+
+\begin{figure}[H]
+\centering
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+\textbf{IF} & \textbf{ID} & \textbf{EX} & \textbf{MEM} & \textbf{WB} \\
+\hline
+Fetch & Decode & Execute & Memory & Write Back \\
+\hline
+\end{tabular}
+\caption{Fases del pipeline MIPS32}
+\end{figure}
+
+\subsection{Descripción de cada fase}
+\begin{enumerate}
+    \item \textbf{IF (Instruction Fetch)}: Obtiene instrucción de memoria
+    \item \textbf{ID (Instruction Decode)}: Decodifica y lee registros
+    \item \textbf{EX (Execute)}: Ejecuta operación (ALU)
+    \item \textbf{MEM (Memory Access)}: Accede a memoria (lw/sw)
+    \item \textbf{WB (Write Back)}: Escribe resultado en registro
+\end{enumerate}
+
+\subsection{Ejemplo con instrucción de ordenamiento}
+\begin{lstlisting}
+lw $t1, 0($t0)   # IF->ID->EX->MEM->WB
+add $t2, $t1, $s0 # IF->ID->EX->WB
+sw $t2, 4($t0)    # IF->ID->EX->MEM->WB
+\end{lstlisting}
+
+\section{Tipos de Instrucciones Utilizadas}
+
+\subsection{Distribución en Bubble Sort}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Tipo} & \textbf{Formato} & \textbf{Ejemplos} & \textbf{Porcentaje} \\
+\hline
+Tipo R & op(6) rs(5) rt(5) rd(5) shamt(5) funct(6) & add, sub, sll & 30\% \\
+Tipo I & op(6) rs(5) rt(5) immediate(16) & lw, sw, beq, addi & 60\% \\
+Tipo J & op(6) address(26) & j, jal & 10\% \\
+\hline
+\end{tabular}
+\caption{Distribución de tipos de instrucciones}
+\end{table}
+
+\subsection{Justificación}
+\begin{itemize}
+    \item \textbf{Tipo I predominante}: Acceso a array (lw/sw) y comparaciones (beq)
+    \item \textbf{Tipo R}: Operaciones aritméticas y de desplazamiento
+    \item \textbf{Tipo J}: Llamadas recursivas y saltos largos
+\end{itemize}
+
+\section{Impacto de Instrucciones de Salto}
+
+\subsection{Penalizaciones}
+\begin{itemize}
+    \item \textbf{Saltos condicionales}: 1-3 ciclos de penalización
+    \item \textbf{Saltos incondicionales}: 1-2 ciclos
+    \item \textbf{Estructuras lineales}: 0 penalización
+\end{itemize}
+
+\subsection{Ejemplo comparativo}
+\begin{lstlisting}
+# Version con saltos (menos eficiente)
+loop:
+    beq $t0, $t1, end
+    add $t2, $t2, 1
+    j loop
+
+# Version lineal (mas eficiente pero no siempre posible)
+    add $t2, $t2, 100
+\end{lstlisting}
+
+\section{Ventajas del Modelo RISC en MIPS}
+
+\subsection{Beneficios para Algoritmos de Ordenamiento}
+
+\begin{enumerate}
+    \item \textbf{Instrucciones simples}: Cada instrucción hace una operación básica
+    \item \textbf{Formato fijo}: Facilita decodificación y pipeline
+    \item \textbf{32 registros}: Suficientes para variables frecuentes
+    \item \textbf{Modos de direccionamiento simples}: Acceso eficiente a arrays
+    \item \textbf{Pipeline optimizado}: 1 instrucción por ciclo ideal
+\end{enumerate}
+
+\subsection{Comparativa CISC vs RISC}
+\begin{itemize}
+    \item \textbf{RISC (MIPS)}: 4-5 instrucciones para intercambio
+    \item \textbf{CISC (x86)}: 1 instrucción compleja (xchg)
+    \item Pero RISC permite mejor pipeline y frecuencia más alta
+\end{itemize}
+
+\section{Depuración Paso a Paso en MARS}
+
+\subsection{Modos de Ejecución}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Comando} & \textbf{Función} & \textbf{Uso} \\
+\hline
+Step (F7) & Ejecuta 1 instrucción & Verificar instrucción específica \\
+Step Over (F8) & Ejecuta hasta retorno & Evitar entrar en funciones \\
+Run (F5) & Ejecución continua & Probar funcionalidad completa \\
+Reset & Reinicia programa & Reiniciar prueba \\
+\hline
+\end{tabular}
+\caption{Modos de ejecución en MARS}
+\end{table}
+
+\subsection{Verificación de Algoritmos}
+Pasos seguidos:
+\begin{enumerate}
+    \item Breakpoints en puntos clave (partición, intercambio)
+    \item Step into para funciones recursivas
+    \item Observar cambios en array después de cada pasada
+    \item Verificar condición de término de bucles
+\end{enumerate}
+
+\section{Herramientas de Depuración en MARS}
+
+\subsection{Ventanas más Útiles}
+
+\begin{enumerate}
+    \item \textbf{Register Window}: Muestra valores de todos los registros
+    \begin{itemize}
+        \item Crítico para ver \$a0-\$a3 en llamadas recursivas
+        \item Verificar \$sp (pila) en cada nivel
+    \end{itemize}
+    
+    \item \textbf{Data Segment Window}: Visualiza el array
+    \begin{itemize}
+        \item Cambios en tiempo real durante ordenamiento
+        \item Verificar que los elementos se ordenan correctamente
+    \end{itemize}
+    
+    \item \textbf{Text Segment}: Código con breakpoints
+    \begin{itemize}
+        \item Resaltado de instrucción actual
+        \item Facilita seguimiento de flujo
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Detección de Errores Comunes}
+\begin{itemize}
+    \item \textbf{Registros no inicializados}: Valores basura en ventana de registros
+    \item \textbf{Desbordamiento de pila}: \$sp fuera de rango
+    \item \textbf{Bucles infinitos}: PC no avanza o se repite
+\end{itemize}
+
+\section{Visualización del Camino de Datos en MARS}
+
+\subsection{Para instrucción Tipo R (add)}
+
+\begin{lstlisting}[caption=Ejemplo: add $t1, $t2, $t3]
+add $t1, $t2, $t3
+\end{lstlisting}
+
+\subsection{Componentes involucrados}
+\begin{enumerate}
+    \item \textbf{IF}: PC $\rightarrow$ Instruction Memory $\rightarrow$ Instrucción
+    \item \textbf{ID}: Decodifica: op=0, rs=$t2, rt=$t3, rd=$t1, funct=32
+    \item \textbf{EX}: ALU recibe valores de registros, funct=32 (add)
+    \item \textbf{MEM}: No hay acceso a memoria (bypass)
+    \item \textbf{WB}: Resultado ALU $\rightarrow$ Register File ($t1)
+\end{enumerate}
+
+\subsection{Visualización en MARS}
+\begin{itemize}
+    \item \textbf{Menú}: Tools $\rightarrow$ Data Path Viewer
+    \item Muestra el flujo de datos en cada ciclo
+    \\item Útil para entender pipeline y forwarding
+\end{itemize}
+
+\section{Conclusiones}
+
+\subsection{Resumen de Hallazgos}
+\begin{enumerate}
+    \item La correcta gestión de registros es crucial en MIPS32
+    \item Bubble Sort es simple pero ineficiente para grandes datasets
+    \item Quicksort ofrece mejor rendimiento pero requiere manejo cuidadoso de pila
+    \item Las herramientas de MARS (Step, Register Window) son indispensables para depuración
+    \item El modelo RISC facilita la comprensión del hardware subyacente
+\end{enumerate}
+
+\subsection{Recomendaciones}
+\begin{itemize}
+    \item Usar registros \$s para valores persistentes
+    \item Minimizar accesos a memoria manteniendo datos en registros
+    \item Para n > 100, preferir Quicksort sobre Bubble Sort
+    \item Utilizar breakpoints estratégicos en lugar de paso a paso continuo
+\end{itemize}
+
+\end{document}
